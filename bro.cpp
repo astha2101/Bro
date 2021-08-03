@@ -1,6 +1,6 @@
 #include<iostream>
 using namespace std;
-
+// this is to test working of git
 // Amit's part (made the web server)
 class Error
 {
