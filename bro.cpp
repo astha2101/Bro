@@ -16,6 +16,51 @@ using namespace std;
 #endif
 
 // Amit [the programmer]
+class StringUtility
+{
+    private:
+    StringUtility();
+    public:
+    static void toLowerCase(char *str)
+    {
+        if(str==NULL) return;
+        for(;*str;str++) if(*str>=65 && *str<=90) *str+=32;
+    }
+};
+class HttpErrorStatusUtility
+{
+private:
+HttpErrorStatusUtility();
+public:
+static void sendBadRequestError(int clientSocketDescriptor)
+{
+    //will complete later on
+}
+static void sendHttpVersionNotSupportedError(int clientSocketDescriptor, char *httpVersion)
+{
+   // will complete later on
+}
+
+static void sendNotFoundError(int clientSocketDescriptor, char * requestURI)
+{
+    char content[1000];
+    char header[200];
+    char response[1200];
+    sprintf(content,"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>404 Error</title></head><body>Requested Resource[%s] Not Found</body></html>",requestURI);
+    int contentLength = strlen(content);
+    sprintf(header,"HTTP/1.1 404 Not Found\r\nContent-Type:text/html\nContent-Length:%d\nConnection: close\r\n\r\n",contentLength);
+    strcpy(response,header);
+    strcat(response,content);
+    send(clientSocketDescriptor,response,strlen(response),0);
+
+}
+
+static void sendMethodNotAllowedError(int clientSocketDescriptor, char *method, char *requestURI)
+{
+    // will complete this later on
+}
+
+};
 class Validator
 {
 public:
@@ -53,6 +98,17 @@ string getError()
 
 class Request
 {
+    private:
+    char *method;
+    char *requestURI;
+    char *httpVersion;
+    Request(char *method,char *requestURI,char *httpVersion)
+    {
+        this->method=method;
+        this->requestURI=requestURI;
+        this->httpVersion=httpVersion;
+    }
+    friend class Bro;
 
 };
 
@@ -86,13 +142,42 @@ Response & operator<<(string content)
     this->contentIterator=this->content.insert_after(this->contentIterator,content);
     return *this;
 }
+friend class HttpResponseUtility;
 };
 
+class HttpResponseUtility
+{
+    private:
+    HttpResponseUtility(){};
+    public:
+    static void sendResponse(int clientSocketDescriptor, Response &response)
+    {
+        char header[200];
+        int contentLength=response.contentLength;
+        sprintf(header,"HTTP/1.1 404 Not Found\r\nContent-Type:text/html\nContent-Length:%d\nConnection: close\r\n\r\n",contentLength);
+        send(clientSocketDescriptor,header,strlen(header),0);
+        auto contentIterator = response.content.begin();
+        while(contentIterator!= response.content.end())
+        {
+            string str = *contentIterator;
+            send(clientSocketDescriptor,str.c_str(),str.length(),0);
+            ++contentIterator;
+        }
+    }
+
+};
+
+enum __request_method__ {__GET__,__POST__,__PUT__,__TRACE__,__DELETE__,__OPTIONS__,__HEAD__};
+typedef struct __url_mapping
+{
+    __request_method__ requestMethod;
+    void (*mappedFunction)(Request &request,Response &response); 
+}URLMapping;
 class Bro
 {
 private:
 string staticResourcesFolder;
-map<string, void (*)(Request &request, Response &response)> urlMappings;
+map<string, URLMapping> urlMappings;
 public:
 Bro()
 {
@@ -117,7 +202,7 @@ void get(string url, void (*callBack)(Request &, Response &))
 {
     if(Validator::isValidURLFormat(url))
     {
-        urlMappings.insert(pair<string, void (*)(Request &request, Response &response)> (url,callBack));
+        urlMappings.insert(pair<string, URLMapping>(url,{__GET__,callBack}));
     }
 }
 void listen(int portNumber, void (*callback)(Error &))
@@ -185,54 +270,66 @@ void listen(int portNumber, void (*callback)(Error &))
     while(1)
     {
         clientSocketDescriptor = accept(serverSocketDescriptor,(struct sockaddr *)(&clientSocketInformation),&len);
-        if(clientSocketDescriptor<0)
+        requestLength=recv(clientSocketDescriptor,requestBuffer,sizeof(requestBuffer)-sizeof(char),0);
+        if(requestLength==0 || requestLength ==-1)
         {
-            // not yet decided
+            close(clientSocketDescriptor);
+            continue;
         }
-        forward_list<string> requestBufferDS;
-        forward_list<string>::iterator requestBufferDSIterator;
-        int requestBufferDSSize =0;
-        int requestDataCount=0;
-        while(1)
+        int i;
+        char *method,*requestURI,*httpVersion;
+        requestBuffer[requestLength]='\0';
+        // code to parse the first line http server starts here
+        // first line should be REQUEST_METHOD SPACE URI SPACE HTTPVERSIONCRLF
+        method=requestBuffer;
+        i=0;
+        while(requestBuffer[i] && requestBuffer[i]!=' ') i++;
+        if(requestBuffer[i]=='\0')
         {
-            requestLength = recv(clientSocketDescriptor,requestBuffer,sizeof(requestBuffer)-sizeof(char),0);
-            if(requestLength==0) break;
-            requestBuffer[requestLength]='\0';
-            requestBufferDSIterator = requestBufferDS.insert_after(requestBufferDSIterator,string(requestBuffer));
-            requestBufferDSSize++;
-            requestDataCount+=requestLength;
+            HttpErrorStatusUtility::sendBadRequestError(clientSocketDescriptor);
+            close(clientSocketDescriptor);
+            continue;
         }
-        if(requestBufferDSSize>0)
+        requestBuffer[i]='\0';
+        i++;
+        if(requestBuffer[i]== ' ' || requestBuffer[i]=='\0')
         {
-            char *requestData = new char[requestDataCount+1];
-            char *p;
-            p = requestData;
-            const char *q;
-            requestBufferDSIterator = requestBufferDS.begin();
-            while(requestBufferDSIterator!=requestBufferDS.end())
-            {
-                q=(*requestBufferDSIterator).c_str();
-                while(*q)
-                {
-                    *p=*q;
-                    p++;
-                    q++;
-                }
-                ++requestBufferDSIterator;
-            }
-            *p='\0';
-            requestBufferDS.clear();
-            printf("-------------request data begin ------------------\n");
-            printf("%s\n",requestData);
-            printf("-------------request data end --------------------\n");
-            // the code to parse the request goes here
-            delete [] requestData;
+            HttpErrorStatusUtility::sendBadRequestError(clientSocketDescriptor);
+            close(clientSocketDescriptor);
+            continue;
 
         }
-        else
-        {
-            // do something if no data is received.
+        StringUtility::toLowerCase(method);
+        if(!(strcmp(method,"get")==0 ||
+        strcmp(method,"put")==0 ||
+        strcmp(method,"post")==0 ||
+        strcmp(method,"trace")==0 ||
+        strcmp(method,"delete")==0 ||
+        strcmp(method,"options")==0 || 
+        strcmp(method,"head")==0)){
+            HttpErrorStatusUtility::sendBadRequestError(clientSocketDescriptor);
+            close(clientSocketDescriptor);
+            continue;
         }
+        requestURI=requestBuffer+i;
+        while(requestBuffer[i] && requestBuffer[i]!=' ') i++;
+        if(requestBuffer[i]=='\0')
+        {
+            HttpErrorStatusUtility::sendBadRequestError(clientSocketDescriptor);
+            close(clientSocketDescriptor);
+            continue;
+        }
+        requestBuffer[i]='\0';
+        i++;
+        if(requestBuffer[i]== ' ' || requestBuffer[i]=='\0')
+        {
+            HttpErrorStatusUtility::sendBadRequestError(clientSocketDescriptor);
+            close(clientSocketDescriptor);
+            continue;
+
+        }
+        httpVersion=requestBuffer+i;
+
         close(clientSocketDescriptor);
         // lots of code will come here later
     }   
