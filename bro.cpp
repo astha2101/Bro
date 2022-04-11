@@ -241,6 +241,46 @@ public:
             throw exception;
         }
     }
+    bool serveStaticResource(int clientSocketDescriptor,const char *requestURI)
+    {
+        if(this->staticResourcesFolder.length()==0) return false;
+        if(!FileSystemUtility::directoryExists(this->staticResourcesFolder.c_str())) return false;
+        string resourcePath=this->staticResourcesFolder+string(requestURI);
+        if(!FileSystemUtility::fileExists(resourcePath.c_str())) return false;
+        FILE *file = fopen(resourcePath.c_str(),"rb");
+        if(file==NULL) return false;
+        long fileSize;
+        fseek(file,0,SEEK_END);
+        fileSize=ftell(file);
+        if(fileSize==0)
+        {
+            fclose(file);
+            return false;
+        }
+        rewind(file);
+        char header[200];
+        sprintf(header,"HTTP/1.1 200 ok\r\nContent-Type: text/html\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n",fileSize);
+        send(clientSocketDescriptor,header,strlen(header),0);
+        long bytesLeftToRead;
+        char buffer[4096];
+        int bytesToRead=4096;
+        bytesLeftToRead=fileSize;
+        while(bytesLeftToRead>0)
+        {
+            if(bytesLeftToRead<bytesToRead)
+            {
+                bytesToRead = bytesLeftToRead;
+            }
+            fread(buffer,bytesToRead,1,file);
+            if(feof(file)) break;
+            send(clientSocketDescriptor,buffer,bytesToRead,0);
+            bytesLeftToRead-=bytesToRead;
+        }
+        fclose(file);
+        return true;
+
+    }
+
     void get(string url, void (*callBack)(Request &, Response &))
     {
         if (Validator::isValidURLFormat(url))
