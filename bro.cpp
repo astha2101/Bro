@@ -17,6 +17,76 @@ using namespace std;
 #endif
 
 // Amit [the programmer]
+class BroUtilities
+{
+private:
+    BroUtilities() {}
+
+public:
+    static void loadMIMETypes(map<string, string> &mimeTypesMap)
+    {
+        FILE *file;
+        file = fopen("bro-data/mime.types", "r");
+        if (file == NULL)
+            return;
+        char *mimeType;
+        char *extension;
+        char line[200];
+        int x;
+        while (true)
+        {
+            fgets(line, 200, file);
+            if (feof(file))
+                break;
+            if (line[0] == '#')
+                continue;
+            // logic to remove /r/n/ from the end of the string starts
+            x = strlen(line) - 1;
+            while (true)
+            {
+                if (line[x] == '\r' || line[x] == '\n')
+                {
+                    line[x] = '\0';
+                    x--;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            // logic to remove /r/n from the end of the string ends
+            mimeType = &line[0];
+            for (x = 0; line[x] != '\t'; x++)
+                ;
+            line[x] = '\0';
+            x++;
+            while (line[x] == '\t')
+                x++;
+            while (true)
+            {
+                extension = &line[x];
+                while (line[x] != '\0' && line[x] != ' ')
+                    x++;
+                if (line[x] == '\0')
+                {
+                    // add entry to map and break from loop
+                    mimeTypesMap.insert(pair<string, string>(string(extension), string(mimeType)));
+                    cout << extension << "  ,  " << mimeType << endl;
+                    break;
+                }
+                else
+                {
+                    // place \0 on nth index, add the entry to map and increment the value of x
+                    line[x] = '\0';
+                    mimeTypesMap.insert(pair<string, string>(string(extension), string(mimeType)));
+                    cout << extension << "  ,  " << mimeType << endl;
+                    x++;
+                }
+            } // parsing of extensions ends here
+        }
+        fclose(file);
+    }
+};
 class FileSystemUtility
 {
 private:
@@ -45,6 +115,17 @@ public:
         if (s.st_mode & S_IFDIR)
             return true;
         return false;
+    }
+
+    static string getFileExtension(const char *path)
+    {
+        int x;
+        x = strlen(path) - 1;
+        while (x >= 0 && path[x] != '.')
+            x--;
+        if (x == -1 || path[x] != '.')
+            return string("");
+        return string(path + (x + 1));
     }
 };
 class StringUtility
@@ -221,10 +302,14 @@ class Bro
 private:
     string staticResourcesFolder;
     map<string, URLMapping> urlMappings;
+    map<string, string> mimeTypes;
 
 public:
     Bro()
     {
+        BroUtilities::loadMIMETypes(mimeTypes);
+        if (mimeTypes.size() == 0)
+            throw string("bro-data folder has been tampered with.");
     }
     ~Bro()
     {
@@ -241,44 +326,68 @@ public:
             throw exception;
         }
     }
-    bool serveStaticResource(int clientSocketDescriptor,const char *requestURI)
+    bool serveStaticResource(int clientSocketDescriptor, const char *requestURI)
     {
-        if(this->staticResourcesFolder.length()==0) return false;
-        if(!FileSystemUtility::directoryExists(this->staticResourcesFolder.c_str())) return false;
-        string resourcePath=this->staticResourcesFolder+string(requestURI);
-        if(!FileSystemUtility::fileExists(resourcePath.c_str())) return false;
-        FILE *file = fopen(resourcePath.c_str(),"rb");
-        if(file==NULL) return false;
+        if (this->staticResourcesFolder.length() == 0)
+            return false;
+        if (!FileSystemUtility::directoryExists(this->staticResourcesFolder.c_str()))
+            return false;
+        string resourcePath = this->staticResourcesFolder + string(requestURI);
+        if (!FileSystemUtility::fileExists(resourcePath.c_str()))
+            return false;
+        FILE *file = fopen(resourcePath.c_str(), "rb");
+        if (file == NULL)
+            return false;
         long fileSize;
-        fseek(file,0,SEEK_END);
-        fileSize=ftell(file);
-        if(fileSize==0)
+        fseek(file, 0, SEEK_END);
+        fileSize = ftell(file);
+        if (fileSize == 0)
         {
             fclose(file);
             return false;
         }
         rewind(file);
+        string extension, mimeType;
+        // StringUtility::toLowerCase(resourcePath.c_str());
+        extension = FileSystemUtility::getFileExtension(resourcePath.c_str());
+        if (extension.length() > 0)
+        {
+            auto mimeTypesIterator = mimeTypes.find(extension);
+            if (mimeTypesIterator != mimeTypes.end())
+            {
+                mimeType = mimeTypesIterator->second;
+            }
+            else
+            {
+                mimeType = string("text/html");
+            }
+        }
+        else
+        {
+            mimeType = string("text/html");
+        }
+        cout << requestURI << " , " << extension << " , " << mimeType << endl;
         char header[200];
-        sprintf(header,"HTTP/1.1 200 ok\r\nContent-Type: text/html\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n",fileSize);
-        send(clientSocketDescriptor,header,strlen(header),0);
+        sprintf(header, "HTTP/1.1 200 ok\r\nContent-Type: %s\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n", mimeType, fileSize);
+        send(clientSocketDescriptor, header, strlen(header), 0);
         long bytesLeftToRead;
         char buffer[4096];
-        int bytesToRead=4096;
-        bytesLeftToRead=fileSize;
-        while(bytesLeftToRead>0)
+        int bytesToRead = 4096;
+        bytesLeftToRead = fileSize;
+        while (bytesLeftToRead > 0)
         {
-            if(bytesLeftToRead<bytesToRead)
+            if (bytesLeftToRead < bytesToRead)
             {
                 bytesToRead = bytesLeftToRead;
             }
-            fread(buffer,bytesToRead,1,file);
-            if(feof(file)) break;
-            send(clientSocketDescriptor,buffer,bytesToRead,0);
-            bytesLeftToRead-=bytesToRead;
+            fread(buffer, bytesToRead, 1, file);
+            if (feof(file))
+                break;
+            send(clientSocketDescriptor, buffer, bytesToRead, 0);
+            bytesLeftToRead -= bytesToRead;
         }
         fclose(file);
         return true;
-
     }
 
     void get(string url, void (*callBack)(Request &, Response &))
@@ -288,6 +397,15 @@ public:
             urlMappings.insert(pair<string, URLMapping>(url, {__GET__, callBack}));
         }
     }
+
+    void post(string url, void (*callBack)(Request &, Response &))
+    {
+        if (Validator::isValidURLFormat(url))
+        {
+            urlMappings.insert(pair<string, URLMapping>(url, {__POST__, callBack}));
+        }
+    }
+
     void listen(int portNumber, void (*callback)(Error &))
     {
 #ifdef _WIN32
@@ -454,9 +572,9 @@ public:
             auto urlMappingIterator = urlMappings.find(requestURI);
             if (urlMappingIterator == urlMappings.end())
             {
-                if(!serveStaticResource(clientSocketDescriptor,requestURI))
+                if (!serveStaticResource(clientSocketDescriptor, requestURI))
                 {
-                HttpErrorStatusUtility::sendNotFoundError(clientSocketDescriptor, requestURI);
+                    HttpErrorStatusUtility::sendNotFoundError(clientSocketDescriptor, requestURI);
                 }
                 close(clientSocketDescriptor);
                 continue;
@@ -464,6 +582,12 @@ public:
 
             URLMapping urlMapping = urlMappingIterator->second;
             if (urlMapping.requestMethod == __GET__ && strcmp(method, "get") != 0)
+            {
+                HttpErrorStatusUtility::sendMethodNotAllowedError(clientSocketDescriptor, method, requestURI);
+                close(clientSocketDescriptor);
+                continue;
+            }
+            if (urlMapping.requestMethod == __POST__ && strcmp(method, "post") != 0)
             {
                 HttpErrorStatusUtility::sendMethodNotAllowedError(clientSocketDescriptor, method, requestURI);
                 close(clientSocketDescriptor);
@@ -492,46 +616,47 @@ int main()
     {
         Bro bro;
         bro.setStaticResourcesFolder("whatever");
-        bro.get("/", [](Request &request, Response &response)
+        bro.get("/save_test1_data", [](Request &request, Response &response)
                 {
     const char *html=R"""(
         <!DOCTYPE HTML>
         <html lang = 'en'>
         <head>
         <meta charset = 'utf-8'>
-        <title>Whatever</title>
+        <title>Bro test cases</title>
         </head>
         <body>
-        <h1>Welcome</h1>
-        <h3>Adminsistrator</h3>
-        <a href='getCustomers'>Customer List</a>
+        <h1>Test case 1 - GET with query string</h1>
+        <h3>Response from server side</h3>
+        <b>Data Saved</b>
+        <br></br>
+        <a href='/index.html'>Home</a>
         </body>
         </html>
     )""";
     response.setContentType("text/html");
     response<<html; });
 
-        bro.get("/getCustomers", [](Request &request, Response &response)
+        bro.post("/save_test2_data", [](Request &request, Response &response)
                 {
-      const char *html=R"""(
-          <!DOCTYPE HTML>
-            <html lang = 'en'>
-            <head>
-            <meta charset = 'utf-8'>
-            <title>Whatever</title>
-            </head>
-            <body>
-            <h1>List of customers</h1>
-            <ul>
-            <li>Ramesh</li>
-            <li>Suresh</li>
-            <li>Summit</li>
-            </ul>
-            </body>
-            </html>
-        )""";
-        response.setContentType("text/html");
-        response<<html; });
+    const char *html=R"""(
+        <!DOCTYPE HTML>
+        <html lang = 'en'>
+        <head>
+        <meta charset = 'utf-8'>
+        <title>Bro test cases</title>
+        </head>
+        <body>
+        <h1>Test case 2 - POST with query string</h1>
+        <h3>Response from server side</h3>
+        <b>Data Saved</b>
+        <br></br>
+        <a href='/index.html'>Home</a>
+        </body>
+        </html>
+    )""";
+    response.setContentType("text/html");
+    response<<html; });
 
         bro.listen(6060, [](Error &error)
                    {
