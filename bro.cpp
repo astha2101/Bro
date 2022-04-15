@@ -1,3 +1,4 @@
+#include<bits/stdc++.h>
 #include <iostream>
 #include <list>
 #include <map>
@@ -23,6 +24,50 @@ private:
     BroUtilities() {}
 
 public:
+    static bool isHexChar(int c)
+    {
+        if(c>=48 && c<=57) return true;
+        if(c>='a' && c<='f') return true;
+        if(c>='A' && c<='F') return true;
+        return false;
+    }
+    static void decode(char *encodedString, char *decodedString)
+    {
+        char *ptr=encodedString;
+        char *d=decodedString;
+        int i,m;
+        i=0;
+        while(*ptr)
+        {
+            if(*ptr=='+')
+            {
+                d[i]=' ';
+                i++;
+                ptr++;
+                continue;
+            }
+            if(*ptr!='%')
+            {
+                d[i]=*ptr;
+                i++;
+                ptr++;
+                continue;
+            }
+            ptr++;
+            if(isHexChar(*ptr) && isHexChar(*(ptr+1)))
+            {
+                sscanf(ptr,"%2x",&m);
+                d[i]=m;
+                i++;
+                ptr+=2;
+            }
+            else{
+                i=0;
+                break;
+            }
+        }
+        d[i]='\0';
+    }
     static void loadMIMETypes(map<string, string> &mimeTypesMap)
     {
         FILE *file;
@@ -71,7 +116,7 @@ public:
                 {
                     // add entry to map and break from loop
                     mimeTypesMap.insert(pair<string, string>(string(extension), string(mimeType)));
-                    cout << extension << "  ,  " << mimeType << endl;
+                    //cout << extension << "  ,  " << mimeType << endl;
                     break;
                 }
                 else
@@ -79,7 +124,7 @@ public:
                     // place \0 on nth index, add the entry to map and increment the value of x
                     line[x] = '\0';
                     mimeTypesMap.insert(pair<string, string>(string(extension), string(mimeType)));
-                    cout << extension << "  ,  " << mimeType << endl;
+                    //cout << extension << "  ,  " << mimeType << endl;
                     x++;
                 }
             } // parsing of extensions ends here
@@ -218,11 +263,76 @@ private:
     char *method;
     char *requestURI;
     char *httpVersion;
-    Request(char *method, char *requestURI, char *httpVersion)
+    map<string,string> dataMap;
+    Request(char *method, char *requestURI, char *httpVersion,char *dataInRequest)
     {
         this->method = method;
         this->requestURI = requestURI;
         this->httpVersion = httpVersion;
+        if(dataInRequest!=NULL && strcmp(this->method,"get")==0)
+        {
+            createDataMap(dataInRequest,dataMap);
+        }
+    }
+
+    void createDataMap(char *dataInRequest, map<string,string> &dataMap)
+    {
+        char *ptr1,*ptr2;
+        char *decoded;
+        int keyLength, valueLength;
+        ptr1=dataInRequest;
+        ptr2=dataInRequest;
+        while(1)
+        {
+            while(*ptr2!='\0' && *ptr2!='=') ptr2++;
+            if(*ptr2=='\0') return;
+            *ptr2='\0';
+            keyLength=ptr2-ptr1;
+            decoded = new char[keyLength+1];
+            BroUtilities::decode(ptr1,decoded);
+            cout<<"Decoded : "<<decoded<<endl;
+            string key=string(decoded);
+            delete [] decoded;
+            ptr1=ptr2+1;
+            ptr2=ptr1;
+            while(*ptr2!='\0' && *ptr2!='&') ptr2++;
+            if(*ptr2=='\0')
+            {
+                cout<<"in if"<<endl;
+                valueLength = ptr2-ptr1;
+                decoded = new char[valueLength+1];
+                BroUtilities::decode(ptr1,decoded);
+                cout<<"Decoded : "<<decoded<<endl;
+                dataMap.insert(pair<string,string>(key,string(decoded)));
+                delete [] decoded;
+                break;
+            }
+            else
+            {
+                cout<<"in else"<<endl;
+                *ptr2='\0';
+                valueLength = ptr2-ptr1;
+                decoded = new char[valueLength+1];
+                BroUtilities::decode(ptr1,decoded);
+                cout<<"Decoded : "<<decoded<<endl;
+                dataMap.insert(pair<string,string>(key,string(decoded)));
+                delete [] decoded;
+                ptr1=ptr2+1;
+                ptr2=ptr1;
+
+            }
+
+        }
+    }
+    public:
+    string operator[](string key)
+    {
+        auto iterator = dataMap.find(key);
+        if(iterator==dataMap.end())
+        {
+            return string("");
+        }
+        return iterator->second;
     }
     friend class Bro;
 };
@@ -352,6 +462,7 @@ public:
         extension = FileSystemUtility::getFileExtension(resourcePath.c_str());
         if (extension.length() > 0)
         {
+            transform(extension.begin(),extension.end(),extension.begin(),::tolower);
             auto mimeTypesIterator = mimeTypes.find(extension);
             if (mimeTypesIterator != mimeTypes.end())
             {
@@ -368,7 +479,7 @@ public:
         }
         cout << requestURI << " , " << extension << " , " << mimeType << endl;
         char header[200];
-        sprintf(header, "HTTP/1.1 200 ok\r\nContent-Type: %s\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n", mimeType, fileSize);
+        sprintf(header, "HTTP/1.1 200 ok\r\nContent-Type: %s\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n", mimeType.c_str(), fileSize);
         send(clientSocketDescriptor, header, strlen(header), 0);
         long bytesLeftToRead;
         char buffer[4096];
@@ -477,7 +588,7 @@ public:
                 continue;
             }
             int i;
-            char *method, *requestURI, *httpVersion;
+            char *method, *requestURI, *httpVersion, *dataInRequest;
             requestBuffer[requestLength] = '\0';
             cout << "--------- Request Start--------------" << endl;
             cout << requestBuffer << endl;
@@ -568,7 +679,14 @@ public:
                 close(clientSocketDescriptor);
                 continue;
             }
-
+            dataInRequest = NULL;
+            i=0;
+            while(requestURI[i]!='\0' && requestURI[i]!='?') i++;
+            if(requestURI[i]=='?')
+            {
+                requestURI[i]='\0';
+                dataInRequest=requestURI+i+1;
+            }
             auto urlMappingIterator = urlMappings.find(requestURI);
             if (urlMappingIterator == urlMappings.end())
             {
@@ -596,7 +714,7 @@ public:
             // code to parse the header and then the payload if exists starts here
             // code to parse the header and then the payload if exists ends here
 
-            Request request(method, requestURI, httpVersion);
+            Request request(method, requestURI, httpVersion, dataInRequest);
             Response response;
             urlMapping.mappedFunction(request, response);
             HttpResponseUtility::sendResponse(clientSocketDescriptor, response);
@@ -618,24 +736,31 @@ int main()
         bro.setStaticResourcesFolder("whatever");
         bro.get("/save_test1_data", [](Request &request, Response &response)
                 {
-    const char *html=R"""(
-        <!DOCTYPE HTML>
-        <html lang = 'en'>
-        <head>
-        <meta charset = 'utf-8'>
-        <title>Bro test cases</title>
-        </head>
-        <body>
-        <h1>Test case 1 - GET with query string</h1>
-        <h3>Response from server side</h3>
-        <b>Data Saved</b>
-        <br></br>
-        <a href='/index.html'>Home</a>
-        </body>
-        </html>
-    )""";
-    response.setContentType("text/html");
-    response<<html; });
+                    string name=request["nm"];
+                    string city=request["ct"];
+                    cout<<"Data that arrived in the request"<<endl;
+                    cout<<name<<endl;
+                    cout<<city<<endl;
+                    cout<<"------------------"<<endl;
+
+                const char *html=R"""(
+                        <!DOCTYPE HTML>
+                        <html lang = 'en'>
+                        <head>
+                        <meta charset = 'utf-8'>
+                        <title>Bro test cases</title>
+                        </head>
+                        <body>
+                        <h1>Test case 1 - GET with query string</h1>
+                        <h3>Response from server side</h3>
+                        <b>Data Saved</b>
+                        <br></br>
+                        <a href='/index.html'>Home</a>
+                        </body>
+                        </html>
+                    )""";
+                    response.setContentType("text/html");
+                    response<<html; });
 
         bro.post("/save_test2_data", [](Request &request, Response &response)
                 {
